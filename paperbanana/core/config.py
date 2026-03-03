@@ -10,6 +10,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 OutputFormat = Literal["png", "jpeg", "webp"]
+ExemplarRetrievalMode = Literal["external_only", "external_then_rerank"]
 
 
 class VLMConfig(BaseSettings):
@@ -68,6 +69,13 @@ class Settings(BaseSettings):
     max_iterations: int = 30
     optimize_inputs: bool = False
     output_resolution: str = "2k"
+    seed: Optional[int] = None
+    exemplar_retrieval_enabled: bool = False
+    exemplar_retrieval_endpoint: Optional[str] = None
+    exemplar_retrieval_mode: ExemplarRetrievalMode = "external_then_rerank"
+    exemplar_retrieval_top_k: int = 10
+    exemplar_retrieval_timeout_seconds: float = 20.0
+    exemplar_retrieval_max_retries: int = 2
 
     # Reference settings
     reference_set_path: str = "data/reference_sets"
@@ -134,6 +142,30 @@ class Settings(BaseSettings):
             raise ValueError(f"output_format must be png, jpeg, or webp. Got: {v}")
         return v
 
+    @field_validator("exemplar_retrieval_top_k")
+    @classmethod
+    def validate_exemplar_retrieval_top_k(cls, v: int) -> int:
+        """Validate exemplar_retrieval_top_k is positive."""
+        if v < 1:
+            raise ValueError("exemplar_retrieval_top_k must be >= 1")
+        return v
+
+    @field_validator("exemplar_retrieval_timeout_seconds")
+    @classmethod
+    def validate_exemplar_retrieval_timeout(cls, v: float) -> float:
+        """Validate exemplar_retrieval_timeout_seconds is positive."""
+        if v <= 0:
+            raise ValueError("exemplar_retrieval_timeout_seconds must be > 0")
+        return v
+
+    @field_validator("exemplar_retrieval_max_retries")
+    @classmethod
+    def validate_exemplar_retrieval_max_retries(cls, v: int) -> int:
+        """Validate exemplar_retrieval_max_retries is non-negative."""
+        if v < 0:
+            raise ValueError("exemplar_retrieval_max_retries must be >= 0")
+        return v
+
     @classmethod
     def from_yaml(cls, config_path: str | Path, **overrides: Any) -> Settings:
         """Load settings from a YAML config file with optional overrides."""
@@ -163,6 +195,13 @@ def _flatten_yaml(config: dict, prefix: str = "") -> dict:
         "pipeline.max_iterations": "max_iterations",
         "pipeline.optimize_inputs": "optimize_inputs",
         "pipeline.output_resolution": "output_resolution",
+        "pipeline.seed": "seed",
+        "pipeline.exemplar_retrieval_enabled": "exemplar_retrieval_enabled",
+        "pipeline.exemplar_retrieval_endpoint": "exemplar_retrieval_endpoint",
+        "pipeline.exemplar_retrieval_mode": "exemplar_retrieval_mode",
+        "pipeline.exemplar_retrieval_top_k": "exemplar_retrieval_top_k",
+        "pipeline.exemplar_retrieval_timeout_seconds": "exemplar_retrieval_timeout_seconds",
+        "pipeline.exemplar_retrieval_max_retries": "exemplar_retrieval_max_retries",
         "reference.path": "reference_set_path",
         "reference.guidelines_path": "guidelines_path",
         "output.dir": "output_dir",

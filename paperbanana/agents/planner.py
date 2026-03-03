@@ -113,11 +113,17 @@ class PlannerAgent(BaseAgent):
             if ex.aspect_ratio:
                 ratio_info = f"\n**Aspect Ratio**: {ex.aspect_ratio:.2f}"
 
+            structure_info = ""
+            if ex.structure_hints:
+                hints_text = str(ex.structure_hints)
+                structure_info = f"\n**Structure Hints**: {hints_text[:240]}"
+
             lines.append(
                 f"### Example {i}\n"
                 f"**Caption**: {ex.caption}\n"
                 f"**Source Context**: {ex.source_context[:500]}"
                 f"{ratio_info}"
+                f"{structure_info}"
                 f"{image_ref}\n"
             )
         return "\n".join(lines)

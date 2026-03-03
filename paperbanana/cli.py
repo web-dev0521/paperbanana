@@ -92,6 +92,41 @@ def generate(
         "--auto-download-data",
         help="Auto-download expanded reference set (~257MB) on first run if not cached",
     ),
+    exemplar_retrieval: bool = typer.Option(
+        False,
+        "--exemplar-retrieval",
+        help="Enable external exemplar retrieval before planning",
+    ),
+    exemplar_endpoint: Optional[str] = typer.Option(
+        None,
+        "--exemplar-endpoint",
+        help="External exemplar retrieval endpoint URL",
+    ),
+    exemplar_mode: Optional[str] = typer.Option(
+        None,
+        "--exemplar-mode",
+        help="Exemplar retrieval mode: external_then_rerank or external_only",
+    ),
+    exemplar_top_k: Optional[int] = typer.Option(
+        None,
+        "--exemplar-top-k",
+        help="Top-k exemplars requested from external retriever",
+    ),
+    exemplar_timeout: Optional[float] = typer.Option(
+        None,
+        "--exemplar-timeout",
+        help="External exemplar retrieval timeout (seconds)",
+    ),
+    exemplar_retries: Optional[int] = typer.Option(
+        None,
+        "--exemplar-retries",
+        help="Retry attempts for external exemplar retrieval on transient errors",
+    ),
+    seed: Optional[int] = typer.Option(
+        None,
+        "--seed",
+        help="Random seed for reproducible image generation",
+    ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Show detailed agent progress and timing"
     ),
@@ -103,6 +138,11 @@ def generate(
 
     if feedback and not continue_run and not continue_last:
         console.print("[red]Error: --feedback requires --continue or --continue-run[/red]")
+        raise typer.Exit(1)
+    if exemplar_mode and exemplar_mode not in ("external_then_rerank", "external_only"):
+        console.print(
+            "[red]Error: --exemplar-mode must be external_then_rerank or external_only[/red]"
+        )
         raise typer.Exit(1)
 
     configure_logging(verbose=verbose)
@@ -128,6 +168,20 @@ def generate(
     if output:
         overrides["output_dir"] = str(Path(output).parent)
     overrides["output_format"] = format
+    if exemplar_retrieval:
+        overrides["exemplar_retrieval_enabled"] = True
+    if exemplar_endpoint:
+        overrides["exemplar_retrieval_endpoint"] = exemplar_endpoint
+    if exemplar_mode:
+        overrides["exemplar_retrieval_mode"] = exemplar_mode
+    if exemplar_top_k is not None:
+        overrides["exemplar_retrieval_top_k"] = exemplar_top_k
+    if exemplar_timeout is not None:
+        overrides["exemplar_retrieval_timeout_seconds"] = exemplar_timeout
+    if exemplar_retries is not None:
+        overrides["exemplar_retrieval_max_retries"] = exemplar_retries
+    if seed is not None:
+        overrides["seed"] = seed
 
     if config:
         settings = Settings.from_yaml(config, **overrides)
@@ -613,6 +667,155 @@ def evaluate(
         result = getattr(scores, dim)
         if result.reasoning:
             console.print(f"\n[bold]{dim}[/bold]: {result.reasoning}")
+
+
+@app.command("ablate-retrieval")
+def ablate_retrieval(
+    input: str = typer.Option(..., "--input", "-i", help="Path to methodology text file"),
+    caption: str = typer.Option(
+        ..., "--caption", "-c", help="Figure caption / communicative intent"
+    ),
+    exemplar_endpoint: str = typer.Option(
+        ..., "--exemplar-endpoint", help="External exemplar retrieval endpoint URL"
+    ),
+    top_k: str = typer.Option(
+        "1,3,5", "--top-k", help="Comma-separated top-k values (e.g., 1,3,5)"
+    ),
+    seed: Optional[int] = typer.Option(
+        None,
+        "--seed",
+        help="Random seed used for all variants (default: 42 if omitted)",
+    ),
+    exemplar_retries: Optional[int] = typer.Option(
+        None,
+        "--exemplar-retries",
+        help="Retry attempts for external exemplar retrieval on transient errors",
+    ),
+    reference: Optional[str] = typer.Option(
+        None,
+        "--reference",
+        "-r",
+        help="Optional human reference image for judge-based preference proxy",
+    ),
+    output_report: Optional[str] = typer.Option(
+        None,
+        "--output-report",
+        "-o",
+        help="Output JSON report path (default: outputs/retrieval_ablation_<runid>.json)",
+    ),
+    config: Optional[str] = typer.Option(None, "--config", help="Path to config YAML file"),
+    vlm_provider: Optional[str] = typer.Option(
+        None, "--vlm-provider", help="VLM provider override for generation and judge"
+    ),
+    image_provider: Optional[str] = typer.Option(
+        None, "--image-provider", help="Image generation provider override"
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show detailed agent progress and timing"
+    ),
+):
+    """Run baseline vs retrieval ablation (k sweep) and save a JSON report."""
+    configure_logging(verbose=verbose)
+
+    input_path = Path(input)
+    if not input_path.exists():
+        console.print(f"[red]Error: Input file not found: {input}[/red]")
+        raise typer.Exit(1)
+
+    reference_path: Optional[Path] = None
+    if reference:
+        reference_path = Path(reference)
+        if not reference_path.exists():
+            console.print(f"[red]Error: Reference image not found: {reference}[/red]")
+            raise typer.Exit(1)
+
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    from paperbanana.core.types import DiagramType, GenerationInput
+    from paperbanana.core.utils import generate_run_id
+    from paperbanana.evaluation.retrieval_ablation import (
+        RetrievalAblationRunner,
+        parse_top_k_values,
+    )
+
+    try:
+        k_values = parse_top_k_values(top_k)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+    overrides = {
+        "exemplar_retrieval_endpoint": exemplar_endpoint,
+        "exemplar_retrieval_enabled": True,
+    }
+    if vlm_provider:
+        overrides["vlm_provider"] = vlm_provider
+    if image_provider:
+        overrides["image_provider"] = image_provider
+    if seed is not None:
+        overrides["seed"] = seed
+    if exemplar_retries is not None:
+        overrides["exemplar_retrieval_max_retries"] = exemplar_retries
+
+    if config:
+        settings = Settings.from_yaml(config, **overrides)
+    else:
+        settings = Settings(**overrides)
+
+    gen_input = GenerationInput(
+        source_context=input_path.read_text(encoding="utf-8"),
+        communicative_intent=caption,
+        diagram_type=DiagramType.METHODOLOGY,
+    )
+
+    runner = RetrievalAblationRunner(
+        settings,
+        reference_image_path=str(reference_path) if reference_path else None,
+    )
+
+    async def _run():
+        return await runner.run(gen_input, top_k_values=k_values)
+
+    console.print(
+        Panel.fit(
+            f"[bold]PaperBanana[/bold] - Retrieval Ablation\n\n"
+            f"Top-k sweep: {k_values}\n"
+            f"Endpoint: {exemplar_endpoint}\n"
+            f"Seed: {settings.seed if settings.seed is not None else 42}\n"
+            f"Reference: {reference_path if reference_path else 'none'}",
+            border_style="magenta",
+        )
+    )
+
+    report = asyncio.run(_run())
+
+    default_report_path = Path(settings.output_dir) / f"retrieval_ablation_{generate_run_id()}.json"
+    report_path = Path(output_report) if output_report else default_report_path
+    saved_path = runner.save_report(report, report_path)
+
+    summary = report.summary
+    human_pref_line = ""
+    if summary.get("best_human_preference_variant") is not None:
+        human_pref_line = (
+            f"Best human preference: {summary.get('best_human_preference_variant')} "
+            f"({summary.get('best_human_preference_score')})\n"
+        )
+    console.print(
+        Panel.fit(
+            "[bold]Ablation Summary[/bold]\n\n"
+            f"Best alignment: {summary.get('best_alignment_variant')} "
+            f"({summary.get('best_alignment_score')})\n"
+            f"{human_pref_line}"
+            f"Fastest: {summary.get('fastest_variant')} "
+            f"({summary.get('fastest_total_seconds')}s)\n"
+            f"Fewest iterations: {summary.get('fewest_iterations_variant')} "
+            f"({summary.get('fewest_iterations')})\n\n"
+            f"Report: [bold]{saved_path}[/bold]",
+            border_style="cyan",
+        )
+    )
 
 
 # ── Data subcommands ──────────────────────────────────────────────
