@@ -921,9 +921,7 @@ class PaperBananaPipeline:
                 save_json(diagram_ir.model_dump(), self._run_dir / "diagram_ir.json")
                 save_svg_from_ir(diagram_ir, final_output_path)
             else:
-                save_raster_wrapped_svg(
-                    iterations[-1].image_path, final_output_path
-                )
+                save_raster_wrapped_svg(iterations[-1].image_path, final_output_path)
 
         # ── Caption Generation (optional) ─────────────────────────────
         generated_caption, caption_seconds = await self._generate_caption(
@@ -1278,9 +1276,7 @@ class PaperBananaPipeline:
                 save_json(diagram_ir.model_dump(), run_dir / "diagram_ir.json")
                 save_svg_from_ir(diagram_ir, final_output_path)
             else:
-                save_raster_wrapped_svg(
-                    iterations[-1].image_path, final_output_path
-                )
+                save_raster_wrapped_svg(iterations[-1].image_path, final_output_path)
 
         # ── Caption Generation (optional) ─────────────────────────────
         generated_caption, caption_seconds = await self._generate_caption(
